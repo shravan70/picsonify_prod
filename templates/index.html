@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PICSONIFY</title>
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<!-- HEADER / TITLE -->
+<div class="container">
+    <h1 class="main_heading">PICSONIFY</h1>
+</div>
+
+<!-- IMAGE UPLOAD FORM -->
+<form action="/" method="post" enctype="multipart/form-data">
+    <label for="images" class="drop-container">
+        <span class="drop-title">Drop a Image here</span>
+        or
+        <input type="file" name="imagefile" id="images" accept="image/*" required>
+    </label>
+    <button type="submit" class="button">Send</button>
+</form>
+
+<!-- LOGS PANEL -->
+<div class="logs-wrapper">
+    <div>
+        <h3 class="logs-title" align="center">Processing Logs</h3>
+        <div id="logs">Waiting for logs...</div>
+    </div>
+</div>
+
+<!-- RESULT DISPLAY -->
+<div align="center">
+{% if prediction %}
+    <p>{{ prediction }}</p>
+
+    {% if audio_filename %}
+        <audio controls id="audio_player">
+            <source src="{{ url_for('get_audio', filename=audio_filename) }}" type="audio/mpeg">
+            Your browser does not support the audio element.
+        </audio>
+    {% endif %}
+{% endif %}
+</div>
+
+<!-- SSE SCRIPT FOR LIVE LOGS -->
+<script>
+    const logDiv = document.getElementById("logs");
+    const eventSource = new EventSource("/logs");
+
+    eventSource.onmessage = function(event) {
+        logDiv.innerHTML += event.data + "<br>";
+        logDiv.scrollTop = logDiv.scrollHeight;
+    };
+</script>
+
+<!-- AUTOPLAY AUDIO ONCE -->
+<script>
+    window.addEventListener("DOMContentLoaded", () => {
+        const audioPlayer = document.getElementById("audio_player");
+        if (audioPlayer) {
+            audioPlayer.play().catch(() => {});
+        }
+    });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,120 @@
+/* ---------- HEADER ---------- */
+.container {
+  background-color: #00b493;
+  height: 250px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  letter-spacing: 10px;
+  font-family: 'Lucida Sans', Geneva, Verdana, sans-serif;
+  font-weight: bolder;
+  text-shadow: 1px 2px 2px black;
+}
+
+.main_heading {
+  color: white;
+  margin-top: 20px;
+}
+
+/* ---------- FORM LAYOUT ---------- */
+form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 40px;
+}
+
+/* ---------- DROP ZONE ---------- */
+.drop-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 200px;
+  width: 90%;
+  max-width: 500px;
+  padding: 20px;
+  border-radius: 10px;
+  border: 2px dashed #555;
+  color: #444;
+  cursor: pointer;
+  transition: background .2s ease-in-out, border .2s ease-in-out;
+}
+
+.drop-container:hover {
+  background: #eee;
+  border-color: #111;
+}
+
+.drop-title {
+  font-size: 20px;
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+
+/* ---------- FILE INPUT ---------- */
+input[type=file]::file-selector-button {
+  border: none;
+  background: #084cdf;
+  padding: 10px 20px;
+  border-radius: 10px;
+  color: #fff;
+  cursor: pointer;
+}
+
+/* ---------- BUTTON ---------- */
+.button {
+  border: none;
+  background: #084cdf;
+  padding: 10px 20px;
+  border-radius: 10px;
+  color: #fff;
+  margin-top: 20px;
+  width: 120px;
+  cursor: pointer;
+}
+
+/* ---------- LOGS (FIXED POSITION) ---------- */
+
+.logs-wrapper {
+  display: flex;
+  justify-content: center;  /* center horizontally */
+  margin: 20px auto 30px;  /* top margin 20px, bottom 30px */
+  width: 100%;
+}
+
+#logs {
+  background: rgb(235, 220, 220);
+  color: black;
+  padding: 10px;
+  width: 600px;             /* fixed width for desktop */
+  max-width: 90%;           /* responsive on smaller screens */
+  height: 180px;             /* fixed height */
+  overflow-y: auto;
+  font-family: monospace;
+  font-size: 13px;
+  border: 2px solid #084cdf;
+  border-radius: 6px;
+}
+/* ---------- RESPONSIVE ---------- */
+@media (max-width: 600px) {
+  .container {
+    height: 180px;
+    letter-spacing: 5px;
+  }
+
+  .main_heading {
+    font-size: 24px;
+  }
+
+  .logs-wrapper {
+    width: 90%;
+    bottom: 10px;
+    right: 5%;
+  }
+
+#logs {
+    width: 90%;
+    height: 140px;
+  }
+}
