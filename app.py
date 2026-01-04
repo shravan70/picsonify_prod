@@ -16,7 +16,6 @@ app = Flask(__name__)
 # -----------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("picsonify")
-
 log_queue = Queue()
 
 def log(msg):
@@ -24,7 +23,7 @@ def log(msg):
     log_queue.put(msg)
 
 # -----------------------
-# Directories (Cloud Run safe)
+# Directories
 # -----------------------
 UPLOAD_DIR = "/tmp/images"
 AUDIO_DIR = "/tmp/audio"
@@ -37,7 +36,7 @@ os.makedirs(AUDIO_DIR, exist_ok=True)
 device = torch.device("cpu")
 
 # -----------------------
-# Model (GLOBAL + LAZY)
+# Model (lazy-load + thread-safe)
 # -----------------------
 model = None
 feature_extractor = None
@@ -48,12 +47,11 @@ def load_model():
     global model, feature_extractor, tokenizer
     if model is None:
         with model_lock:
-            if model is None:  # double check
+            if model is None:
                 log("🔄 Loading model (one-time)")
                 model = VisionEncoderDecoderModel.from_pretrained(
                     "nlpconnect/vit-gpt2-image-captioning"
                 ).to(device)
-
                 feature_extractor = ViTImageProcessor.from_pretrained(
                     "nlpconnect/vit-gpt2-image-captioning"
                 )
@@ -63,7 +61,7 @@ def load_model():
                 log("✅ Model ready")
 
 # -----------------------
-# Prediction
+# Prediction + Audio
 # -----------------------
 def process_image_task(image_path):
     load_model()
@@ -83,10 +81,7 @@ def process_image_task(image_path):
         num_beams=4
     )
 
-    caption = tokenizer.decode(
-        output_ids[0], skip_special_tokens=True
-    )
-
+    caption = tokenizer.decode(output_ids[0], skip_special_tokens=True)
     if not caption.strip():
         caption = "No caption generated"
 
@@ -115,23 +110,16 @@ def index():
 
         caption, audio_file = process_image_task(image_path)
 
-        return render_template(
-            "index.html",
-            prediction=caption,
-            audio_filename=audio_file
-        )
+        return render_template("index.html", prediction=caption, audio_filename=audio_file)
 
     return render_template("index.html")
 
 @app.route("/get_audio/<filename>")
 def get_audio(filename):
-    return send_file(
-        os.path.join(AUDIO_DIR, filename),
-        mimetype="audio/mpeg"
-    )
+    return send_file(os.path.join(AUDIO_DIR, filename), mimetype="audio/mpeg")
 
 # -----------------------
-# SSE Logs (NON-BLOCKING)
+# SSE Logs
 # -----------------------
 @app.route("/logs")
 def logs():
