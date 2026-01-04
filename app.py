@@ -7,129 +7,146 @@ import os
 import uuid
 import logging
 from queue import Queue, Empty
+import threading
 
 app = Flask(__name__)
 
 # -----------------------
-# Logging setup
+# Logging
 # -----------------------
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("picsonify")
+
 log_queue = Queue()
 
-def log(message):
-    logger.info(message)          # Terminal / Cloud logs
-    log_queue.put(message)        # UI logs
+def log(msg):
+    logger.info(msg)
+    log_queue.put(msg)
 
 # -----------------------
-# Configuration
+# Directories (Cloud Run safe)
 # -----------------------
-UPLOAD_DIR = os.path.join(os.getcwd(), "images")    # Folder to save uploaded images
-AUDIO_DIR = os.path.join(os.getcwd(), "Sound")     # Folder to save generated audio
+UPLOAD_DIR = "/tmp/images"
+AUDIO_DIR = "/tmp/audio"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(AUDIO_DIR, exist_ok=True)
 
-device = torch.device("cpu")  # CPU for portability
+# -----------------------
+# Device
+# -----------------------
+device = torch.device("cpu")
 
 # -----------------------
-# Load Model once
+# Model (GLOBAL + LAZY)
 # -----------------------
-log("🔄 Loading image captioning model...")
-model = VisionEncoderDecoderModel.from_pretrained(
-    "nlpconnect/vit-gpt2-image-captioning"
-).to(device)
-feature_extractor = ViTImageProcessor.from_pretrained(
-    "nlpconnect/vit-gpt2-image-captioning"
-)
-tokenizer = AutoTokenizer.from_pretrained(
-    "nlpconnect/vit-gpt2-image-captioning"
-)
-log("✅ Model loaded successfully")
+model = None
+feature_extractor = None
+tokenizer = None
+model_lock = threading.Lock()
+
+def load_model():
+    global model, feature_extractor, tokenizer
+    if model is None:
+        with model_lock:
+            if model is None:  # double check
+                log("🔄 Loading model (one-time)")
+                model = VisionEncoderDecoderModel.from_pretrained(
+                    "nlpconnect/vit-gpt2-image-captioning"
+                ).to(device)
+
+                feature_extractor = ViTImageProcessor.from_pretrained(
+                    "nlpconnect/vit-gpt2-image-captioning"
+                )
+                tokenizer = AutoTokenizer.from_pretrained(
+                    "nlpconnect/vit-gpt2-image-captioning"
+                )
+                log("✅ Model ready")
 
 # -----------------------
-# Prediction + Audio Generation
+# Prediction
 # -----------------------
-def predict_and_generate_audio(image_path):
-    try:
-        log("📥 Image received")
+def process_image_task(image_path):
+    load_model()
 
-        log("🖼️ Preprocessing image")
-        image = Image.open(image_path).convert("RGB")
-        pixel_values = feature_extractor(
-            images=[image], return_tensors="pt"
-        ).pixel_values.to(device)
+    log("📥 Image received")
+    image = Image.open(image_path).convert("RGB")
 
-        log("🤖 Generating caption")
-        output_ids = model.generate(
-            pixel_values,
-            max_length=16,
-            num_beams=4
-        )
-        prediction = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    log("🖼️ Preprocessing")
+    pixel_values = feature_extractor(
+        images=[image], return_tensors="pt"
+    ).pixel_values.to(device)
 
-        if not prediction.strip():
-            prediction = "No caption generated"
+    log("🤖 Generating caption")
+    output_ids = model.generate(
+        pixel_values,
+        max_length=16,
+        num_beams=4
+    )
 
-        log(f"📝 Caption generated: {prediction}")
+    caption = tokenizer.decode(
+        output_ids[0], skip_special_tokens=True
+    )
 
-        log("🔊 Generating audio")
-        audio_filename = f"{uuid.uuid4().hex}.mp3"
-        audio_path = os.path.join(AUDIO_DIR, audio_filename)
-        gtts.gTTS(text=prediction, lang="en").save(audio_path)
-        log("✅ Audio generated successfully")
+    if not caption.strip():
+        caption = "No caption generated"
 
-        return prediction, audio_filename
-    except Exception as e:
-        log(f"❌ Error in prediction: {e}")
-        raise
+    log(f"📝 Caption: {caption}")
+
+    log("🔊 Generating audio")
+    audio_name = f"{uuid.uuid4().hex}.mp3"
+    audio_path = os.path.join(AUDIO_DIR, audio_name)
+    gtts.gTTS(text=caption, lang="en").save(audio_path)
+
+    log("✅ Audio ready")
+    return caption, audio_name
 
 # -----------------------
 # Routes
 # -----------------------
 @app.route("/", methods=["GET", "POST"])
-def process_image():
+def index():
     if request.method == "POST":
-        imagefile = request.files.get("imagefile")
-        if not imagefile or imagefile.filename == "":
+        file = request.files.get("imagefile")
+        if not file:
             return "No image uploaded", 400
 
         image_path = os.path.join(UPLOAD_DIR, f"{uuid.uuid4().hex}.jpg")
-        imagefile.save(image_path)
+        file.save(image_path)
 
-        try:
-            prediction, audio_filename = predict_and_generate_audio(image_path)
-        except Exception as e:
-            return f"Internal Server Error: {e}", 500
+        caption, audio_file = process_image_task(image_path)
 
-        # Render template directly to avoid audio replay on redirect
-        return render_template("index.html", prediction=prediction, audio_filename=audio_filename)
+        return render_template(
+            "index.html",
+            prediction=caption,
+            audio_filename=audio_file
+        )
 
     return render_template("index.html")
 
 @app.route("/get_audio/<filename>")
 def get_audio(filename):
-    audio_path = os.path.join(AUDIO_DIR, filename)
-    if not os.path.exists(audio_path):
-        return "Audio file not found", 404
-    return send_file(audio_path, mimetype="audio/mpeg")
+    return send_file(
+        os.path.join(AUDIO_DIR, filename),
+        mimetype="audio/mpeg"
+    )
 
 # -----------------------
-# SSE Log Streaming
+# SSE Logs (NON-BLOCKING)
 # -----------------------
 @app.route("/logs")
-def stream_logs():
-    def event_stream():
+def logs():
+    def stream():
         while True:
             try:
-                message = log_queue.get(timeout=1)
-                yield f"data: {message}\n\n"
+                msg = log_queue.get(timeout=0.5)
+                yield f"data: {msg}\n\n"
             except Empty:
-                continue
-    return Response(event_stream(), mimetype="text/event-stream")
+                yield ":\n\n"  # keep-alive
+    return Response(stream(), mimetype="text/event-stream")
 
 # -----------------------
-# Entry point
+# Entry
 # -----------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, threaded=True)
