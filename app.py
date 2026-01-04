@@ -12,7 +12,7 @@ import threading
 app = Flask(__name__)
 
 # -----------------------
-# Logging
+# Logging setup
 # -----------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("picsonify")
@@ -23,7 +23,7 @@ def log(msg):
     log_queue.put(msg)
 
 # -----------------------
-# Directories
+# Directories (Cloud Run safe)
 # -----------------------
 UPLOAD_DIR = "/tmp/images"
 AUDIO_DIR = "/tmp/audio"
@@ -36,7 +36,7 @@ os.makedirs(AUDIO_DIR, exist_ok=True)
 device = torch.device("cpu")
 
 # -----------------------
-# Model (lazy-load + thread-safe)
+# Model (Load once globally)
 # -----------------------
 model = None
 feature_extractor = None
@@ -47,23 +47,26 @@ def load_model():
     global model, feature_extractor, tokenizer
     if model is None:
         with model_lock:
-            if model is None:
+            if model is None:  # double check
                 log("🔄 Loading model (one-time)")
                 model = VisionEncoderDecoderModel.from_pretrained(
-                    "nlpconnect/vit-gpt2-image-captioning"
+                    "nlpconnect/vit-gpt2-image-captioning",
+                    cache_dir="/app/hf_cache"
                 ).to(device)
                 feature_extractor = ViTImageProcessor.from_pretrained(
-                    "nlpconnect/vit-gpt2-image-captioning"
+                    "nlpconnect/vit-gpt2-image-captioning",
+                    cache_dir="/app/hf_cache"
                 )
                 tokenizer = AutoTokenizer.from_pretrained(
-                    "nlpconnect/vit-gpt2-image-captioning"
+                    "nlpconnect/vit-gpt2-image-captioning",
+                    cache_dir="/app/hf_cache"
                 )
-                log("✅ Model ready")
+                log("✅ Model loaded")
 
 # -----------------------
-# Prediction + Audio
+# Image -> Caption -> Audio
 # -----------------------
-def process_image_task(image_path):
+def process_image(image_path):
     load_model()
 
     log("📥 Image received")
@@ -80,7 +83,6 @@ def process_image_task(image_path):
         max_length=16,
         num_beams=4
     )
-
     caption = tokenizer.decode(output_ids[0], skip_special_tokens=True)
     if not caption.strip():
         caption = "No caption generated"
@@ -91,8 +93,8 @@ def process_image_task(image_path):
     audio_name = f"{uuid.uuid4().hex}.mp3"
     audio_path = os.path.join(AUDIO_DIR, audio_name)
     gtts.gTTS(text=caption, lang="en").save(audio_path)
-
     log("✅ Audio ready")
+
     return caption, audio_name
 
 # -----------------------
@@ -108,7 +110,7 @@ def index():
         image_path = os.path.join(UPLOAD_DIR, f"{uuid.uuid4().hex}.jpg")
         file.save(image_path)
 
-        caption, audio_file = process_image_task(image_path)
+        caption, audio_file = process_image(image_path)
 
         return render_template("index.html", prediction=caption, audio_filename=audio_file)
 
@@ -119,7 +121,7 @@ def get_audio(filename):
     return send_file(os.path.join(AUDIO_DIR, filename), mimetype="audio/mpeg")
 
 # -----------------------
-# SSE Logs
+# SSE logs
 # -----------------------
 @app.route("/logs")
 def logs():
@@ -133,7 +135,7 @@ def logs():
     return Response(stream(), mimetype="text/event-stream")
 
 # -----------------------
-# Entry
+# Entry point
 # -----------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
