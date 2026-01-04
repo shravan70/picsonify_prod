@@ -1,21 +1,67 @@
+# -------------------------
+# Base image
+# -------------------------
 FROM python:3.10-slim
 
 WORKDIR /app
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV PORT=8080
+# -------------------------
+# Environment variables
+# -------------------------
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=8080 \
+    HF_HOME=/tmp/hf_cache \
+    TRANSFORMERS_CACHE=/tmp/hf_cache
 
-RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+# -------------------------
+# System dependencies
+# -------------------------
+RUN apt-get update && apt-get install -y \
+    git \
+    ffmpeg \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --upgrade pip
-
-RUN pip install torch==2.1.0+cpu torchvision==0.16.0+cpu \
-    --index-url https://download.pytorch.org/whl/cpu
-
+# -------------------------
+# Install Python dependencies
+# -------------------------
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir gunicorn
 
+# -------------------------
+# Create writable cache dirs
+# -------------------------
+RUN mkdir -p /tmp/hf_cache /tmp/images /tmp/audio
+
+# -------------------------
+# Pre-download HuggingFace model (build-time)
+# -------------------------
+RUN python - <<EOF
+from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
+VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+AutoTokenizer.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+EOF
+
+# -------------------------
+# Copy application code
+# -------------------------
 COPY . .
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--timeout", "300", "app:app"]
+# -------------------------
+# Expose port
+# -------------------------
+EXPOSE 8080
+
+# -------------------------
+# Run app (Gunicorn)
+# -------------------------
+CMD ["gunicorn", \
+     "--bind", "0.0.0.0:8080", \
+     "--workers", "1", \
+     "--threads", "4", \
+     "--timeout", "300", \
+     "app:app"]
