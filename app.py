@@ -9,7 +9,17 @@ import logging
 from queue import Queue, Empty
 import threading
 
+# -----------------------
+# ENV (CRITICAL)
+# -----------------------
+os.environ["HF_HOME"] = "/tmp/hf_cache"
+os.environ["TRANSFORMERS_CACHE"] = "/tmp/hf_cache"
+
+# -----------------------
+# Flask app
+# -----------------------
 app = Flask(__name__)
+app.secret_key = "picsonify-secret"
 
 # -----------------------
 # Logging setup
@@ -23,12 +33,15 @@ def log(msg):
     log_queue.put(msg)
 
 # -----------------------
-# Directories (Cloud Run safe)
+# Directories (Cloud-safe)
 # -----------------------
 UPLOAD_DIR = "/tmp/images"
 AUDIO_DIR = "/tmp/audio"
+HF_CACHE = "/tmp/hf_cache"
+
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(AUDIO_DIR, exist_ok=True)
+os.makedirs(HF_CACHE, exist_ok=True)
 
 # -----------------------
 # Device
@@ -36,7 +49,7 @@ os.makedirs(AUDIO_DIR, exist_ok=True)
 device = torch.device("cpu")
 
 # -----------------------
-# Model (Load once globally)
+# Model (singleton)
 # -----------------------
 model = None
 feature_extractor = None
@@ -45,26 +58,29 @@ model_lock = threading.Lock()
 
 def load_model():
     global model, feature_extractor, tokenizer
+
     if model is None:
         with model_lock:
-            if model is None:  # double check
+            if model is None:
                 log("🔄 Loading model (one-time)")
+
                 model = VisionEncoderDecoderModel.from_pretrained(
-                    "nlpconnect/vit-gpt2-image-captioning",
-                    cache_dir="/app/hf_cache"
+                    "nlpconnect/vit-gpt2-image-captioning"
                 ).to(device)
+
                 feature_extractor = ViTImageProcessor.from_pretrained(
-                    "nlpconnect/vit-gpt2-image-captioning",
-                    cache_dir="/app/hf_cache"
+                    "nlpconnect/vit-gpt2-image-captioning"
                 )
+
                 tokenizer = AutoTokenizer.from_pretrained(
-                    "nlpconnect/vit-gpt2-image-captioning",
-                    cache_dir="/app/hf_cache"
+                    "nlpconnect/vit-gpt2-image-captioning"
                 )
-                log("✅ Model loaded")
+
+                model.eval()
+                log("✅ Model loaded successfully")
 
 # -----------------------
-# Image -> Caption -> Audio
+# Image → Caption → Audio
 # -----------------------
 def process_image(image_path):
     load_model()
@@ -78,23 +94,23 @@ def process_image(image_path):
     ).pixel_values.to(device)
 
     log("🤖 Generating caption")
-    output_ids = model.generate(
-        pixel_values,
-        max_length=16,
-        num_beams=4
-    )
-    caption = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-    if not caption.strip():
-        caption = "No caption generated"
+    with torch.no_grad():
+        output_ids = model.generate(
+            pixel_values,
+            max_length=16,
+            num_beams=4
+        )
 
+    caption = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    caption = caption.strip() or "No caption generated"
     log(f"📝 Caption: {caption}")
 
     log("🔊 Generating audio")
     audio_name = f"{uuid.uuid4().hex}.mp3"
     audio_path = os.path.join(AUDIO_DIR, audio_name)
     gtts.gTTS(text=caption, lang="en").save(audio_path)
-    log("✅ Audio ready")
 
+    log("✅ Audio ready")
     return caption, audio_name
 
 # -----------------------
@@ -112,26 +128,33 @@ def index():
 
         caption, audio_file = process_image(image_path)
 
-        return render_template("index.html", prediction=caption, audio_filename=audio_file)
+        return render_template(
+            "index.html",
+            prediction=caption,
+            audio_path=audio_file
+        )
 
     return render_template("index.html")
 
 @app.route("/get_audio/<filename>")
 def get_audio(filename):
-    return send_file(os.path.join(AUDIO_DIR, filename), mimetype="audio/mpeg")
+    return send_file(
+        os.path.join(AUDIO_DIR, filename),
+        mimetype="audio/mpeg"
+    )
 
 # -----------------------
-# SSE logs
+# SSE Logs (UI terminal)
 # -----------------------
 @app.route("/logs")
 def logs():
     def stream():
         while True:
             try:
-                msg = log_queue.get(timeout=0.5)
+                msg = log_queue.get(timeout=1)
                 yield f"data: {msg}\n\n"
             except Empty:
-                yield ":\n\n"  # keep-alive
+                yield ":\n\n"
     return Response(stream(), mimetype="text/event-stream")
 
 # -----------------------
