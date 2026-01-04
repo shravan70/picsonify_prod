@@ -6,16 +6,33 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
 
+# System dependencies
 RUN apt-get update && apt-get install -y \
     git \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
+# Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# 🔥 PRELOAD MODEL (THIS REMOVES 1+ MIN LATENCY)
+RUN python - <<EOF
+from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
+VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+AutoTokenizer.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+EOF
+
+# App source
 COPY . .
 
 EXPOSE 8080
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "300", "--workers", "1", "app:app"]
+# Gunicorn optimized for ML inference
+CMD ["gunicorn", \
+     "--bind", "0.0.0.0:8080", \
+     "--timeout", "300", \
+     "--workers", "1", \
+     "--threads", "4", \
+     "app:app"]
