@@ -17,29 +17,17 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pre-download the model to avoid runtime latency
-RUN python - <<EOF
-from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
+# Pre-download transformers model
+RUN python -c "from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer; \
+    VisionEncoderDecoderModel.from_pretrained('nlpconnect/vit-gpt2-image-captioning', cache_dir='/app/hf_cache'); \
+    ViTImageProcessor.from_pretrained('nlpconnect/vit-gpt2-image-captioning', cache_dir='/app/hf_cache'); \
+    AutoTokenizer.from_pretrained('nlpconnect/vit-gpt2-image-captioning', cache_dir='/app/hf_cache')"
 
-VisionEncoderDecoderModel.from_pretrained(
-    "nlpconnect/vit-gpt2-image-captioning",
-    cache_dir="/app/hf_cache"
-)
-ViTImageProcessor.from_pretrained(
-    "nlpconnect/vit-gpt2-image-captioning",
-    cache_dir="/app/hf_cache"
-)
-AutoTokenizer.from_pretrained(
-    "nlpconnect/vit-gpt2-image-captioning",
-    cache_dir="/app/hf_cache"
-)
-EOF
-
-# Copy application code
+# Copy app code
 COPY . .
 
 # Expose port
 EXPOSE 8080
 
-# Run with Gunicorn
+# Run Gunicorn
 CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "300", "--workers", "1", "--threads", "4", "app:app"]
